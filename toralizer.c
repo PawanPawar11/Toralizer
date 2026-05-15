@@ -1,92 +1,150 @@
 #include "toralizer.h"
 
-Req *request(const char *dstip, const int dstport) {
-    Req *req;
+Socks4Request *createSocks4Request(
+    const char *destinationIp,
+    const int destinationPort
+) {
 
-    req = malloc(reqsize);
+    Socks4Request *request;
 
-    req->vn = 4;
-    req->cd = 1;
-    req->dstport = htons(dstport);
-    req->dstip = inet_addr(dstip);
-    strncpy(req->userid, USERNAME, 8);
+    request = malloc(REQUEST_SIZE);
 
-    return req;
+    request->versionNumber = 4;
+    request->commandCode = 1;
+
+    request->destinationPort = htons(destinationPort);
+
+    request->destinationIp = inet_addr(destinationIp);
+
+    strncpy(request->userId, PROXY_USER_ID, 8);
+
+    return request;
 }
 
 int main(int argc, char *argv[]) {
-    char *host;
-    int port, s; // s is for socket
-    struct sockaddr_in sock; // as of this moment consider a sockaddr_in as an object which constains the variouos fields, hence the reason why we have its data type as struct and sock as a variable name
-    Req *req;
-    Res *res;
-    char buf[ressize];
-    int success;
+
+    char *targetHost;
+
+    int targetPort;
+
+    int proxySocket;
+
+    struct sockaddr_in proxyAddress;
+
+    Socks4Request *connectionRequest;
+
+    Socks4Response *proxyResponse;
+
+    char responseBuffer[RESPONSE_SIZE];
+
+    int connectionSuccessful;
 
     if(argc < 3) {
-        fprintf(stderr, "Usage: %s <host> <port>", argv[0]);
+
+        fprintf(
+            stderr,
+            "Usage: %s <host> <port>",
+            argv[0]
+        );
 
         return -1;
     }
 
-    host = argv[1];
-    port = atoi(argv[2]);
+    targetHost = argv[1];
 
-    s = socket(AF_INET, SOCK_STREAM, 0);
+    targetPort = atoi(argv[2]);
 
-    if(s < 0) {
+    proxySocket = socket(AF_INET, SOCK_STREAM, 0);
+
+    if(proxySocket < 0) {
+
         perror("socket");
 
         return -1;
     }
-    
-    sock.sin_family = AF_INET;
-    sock.sin_port = htons(PROXYPORT);
-    sock.sin_addr.s_addr = inet_addr(PROXY);
 
-    if(connect(s, (struct sockaddr *) &sock, sizeof(sock))) {
-        perror("Connection Errror");
+    proxyAddress.sin_family = AF_INET;
+
+    proxyAddress.sin_port = htons(PROXY_PORT);
+
+    proxyAddress.sin_addr.s_addr = inet_addr(PROXY_IP);
+
+    if(connect(
+        proxySocket,
+        (struct sockaddr *) &proxyAddress,
+        sizeof(proxyAddress)
+    )) {
+
+        perror("Connection Error");
 
         return -1;
     }
 
     printf("Connected to proxy!\n");
 
-    req = request(host, port);
+    connectionRequest = createSocks4Request(
+        targetHost,
+        targetPort
+    );
 
-    write(s, req, reqsize);
+    write(
+        proxySocket,
+        connectionRequest,
+        REQUEST_SIZE
+    );
 
-    memset(buf, 0, ressize);
+    memset(
+        responseBuffer,
+        0,
+        RESPONSE_SIZE
+    );
 
-    if(read(s, buf, ressize) < 1) {
+    if(read(
+        proxySocket,
+        responseBuffer,
+        RESPONSE_SIZE
+    ) < 1) {
+
         perror("Read Error");
-        free(req);
-        close(s);
-        
+
+        free(connectionRequest);
+
+        close(proxySocket);
+
         return -1;
     }
 
-    res = (Res *) buf;
-    success = (res->cd == 90);
+    proxyResponse = (Socks4Response *) responseBuffer;
 
-    if(!success) {
-        fprintf(stderr, 
-            "Unable to traverse"
-            "to the proxy, error code: %d\n",
-            res->cd
+    connectionSuccessful =
+        (proxyResponse->statusCode == 90);
+
+    if(!connectionSuccessful) {
+
+        fprintf(
+            stderr,
+            "Unable to traverse the proxy, "
+            "error code: %d\n",
+            proxyResponse->statusCode
         );
 
-        free(req);
-        close(s);
+        free(connectionRequest);
+
+        close(proxySocket);
 
         return -1;
     }
 
-    printf("Successfully connected through the proxy to: "
-    "%s:%d\n", host, port);
+    printf(
+        "Successfully connected through the proxy to: "
+        "%s:%d\n",
+        targetHost,
+        targetPort
+    );
 
-    free(req);
-    close(s);
+    free(connectionRequest);
+
+    close(proxySocket);
 
     return 0;
 }
